@@ -29,6 +29,7 @@ public class DataSeeder implements CommandLineRunner {
     private final ApplicationRepository applicationRepository;
     private final PlacementRecordRepository placementRecordRepository;
     private final PasswordEncoder passwordEncoder;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     public DataSeeder(UserRepository userRepository,
                       CompanyRepository companyRepository,
@@ -37,7 +38,8 @@ public class DataSeeder implements CommandLineRunner {
                       JobPostingRepository jobPostingRepository,
                       ApplicationRepository applicationRepository,
                       PlacementRecordRepository placementRecordRepository,
-                      PasswordEncoder passwordEncoder) {
+                      PasswordEncoder passwordEncoder,
+                      org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.studentProfileRepository = studentProfileRepository;
@@ -46,11 +48,14 @@ public class DataSeeder implements CommandLineRunner {
         this.applicationRepository = applicationRepository;
         this.placementRecordRepository = placementRecordRepository;
         this.passwordEncoder = passwordEncoder;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
     @Transactional
     public void run(String... args) {
+        syncPostgreSqlSequences();
+
         if (userRepository.count() > 0) {
             log.info("Database already initialized with users. Skipping DataSeeder.");
             return;
@@ -193,5 +198,30 @@ public class DataSeeder implements CommandLineRunner {
         placementRecordRepository.save(placement1);
 
         log.info("Demo data seeding completed successfully! Users seeded: Student, Recruiter, TPO.");
+    }
+
+    private void syncPostgreSqlSequences() {
+        try {
+            String dbName = jdbcTemplate.execute((java.sql.Connection conn) -> conn.getMetaData().getDatabaseProductName());
+            if ("PostgreSQL".equalsIgnoreCase(dbName)) {
+                log.info("Synchronizing PostgreSQL serial sequences with table max IDs...");
+                String[] tables = {
+                    "users", "companies", "student_profiles", "skills",
+                    "job_postings", "applications", "resume_analyses", "placement_records"
+                };
+                for (String table : tables) {
+                    try {
+                        jdbcTemplate.execute(
+                            "SELECT setval(pg_get_serial_sequence('" + table + "', 'id'), COALESCE((SELECT MAX(id) FROM " + table + "), 1))"
+                        );
+                    } catch (Exception e) {
+                        log.debug("Notice on sequence sync for table {}: {}", table, e.getMessage());
+                    }
+                }
+                log.info("PostgreSQL sequences synchronized successfully.");
+            }
+        } catch (Exception e) {
+            log.warn("Sequence synchronization check skipped: {}", e.getMessage());
+        }
     }
 }
